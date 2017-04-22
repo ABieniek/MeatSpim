@@ -51,13 +51,23 @@ REQUEST_PUZZLE_ACK      = 0xffff00d8
 
 # Boolean Masks
 # use $t9 for Bit Flags
-CAN_OPEN_ENEMY_PLAYPEN	= 0x00000001	# flag for if the enemy's playpen can be opened
-PUZZLE_READY		= 0x00000002	# flag for if the puzzle is ready
-PUZZLE_REQUESTED	= 0x00000004	# we requested the puzzle, there's no need to request another one
-HAS_ENEMY		= 0xf0000000	# true if we have an opponent in this simulation
+CAN_UNLOCK_ENEMY_PLAYPEN	= 0x00000001	# flag for if the enemy's playpen can be opened
+OUR_PLAYPEN_UNLOCKED		= 0x00000002	# flag for if our playpen was opened
+PUZZLE_READY			= 0x00000004	# flag for if the puzzle is ready
+PUZZLE_REQUESTED		= 0x00000008	# we requested the puzzle, there's no need to request another one
+HAS_ENEMY			= 0x00000010	# true if we have an opponent in this simulation
+HUNT_BUNNY			= 0x00000020	# true if we should be hunting bunnies right now
+
 
 .data
+# puzzle stuff
 turns: .word 1 0 -1 0
+# trig stuff
+three:	.float	3.0
+five:	.float	5.0
+PI:	.float	3.141592
+F180:	.float  180.0
+
 
 .align 2
 bunnies_data: .space 484
@@ -67,12 +77,25 @@ integer_solution: .space 4
 
 ##### REGISTER VARIABLE INDEX #####
 ##### T Registers
-# $t0 - register for temporary values, i.e. holds values used in branch condition testing
+# $t0 - temporary (branch condition testing, ...)
+# $t1 - temporary (loop counter)
+# $t2 - temporary (address holder)
+# $t3 - weight of heaviest bunny in find_bunny
+# $t4 - 
+# $t5 - 
+# $t6 - 
+# $t7 - address of the bunny we want (set to null if we just caught a bunny)
+# $t8 - weight of rabbits we're holding
 # $t9 - holds bit flags used for bot's decision making
 ##### S Registers
-# $
-
-
+# $s0 - x position of our pen
+# $s1 - y position of our pen
+# $s2 - x position of their pen
+# $s3 - y position of their pen
+# $s4 - number of carrots we have
+# $s5 - 
+# $s6 - 
+# $s7 - 
 
  .text
  main:
@@ -86,13 +109,36 @@ integer_solution: .space 4
         or      $t4, $t4, 1				# global interrupt enable
         mtc0    $t4, $12				# set interrupt mask (Status register)
 
+	# set flag for hunting bunnies, there's nothing else we could want to do at the start
+	or $t9, $t9, HUNT_BUNNY
+
 	# set flag if we have an enemy
 	# reading from any of the enemy bot queries will return -1
 	lw $t0, OTHER_BOT_X
 	beq $t0, -1, enemy_bot_false	# if the return value is negative 1, skip setting the flag
 	or $t9, $t9, HAS_ENEMY
-
+	lw $s3, PLAYPEN_OTHER_LOCATION	# we can also load the x and y position of their pen here
+	srl $s2, $s3, 16		# x position of their playpen
+	and $s3, $s3, 0x0000ffff	# y position of their playpen
+	
 enemy_bot_false:
+	# give SEARCH_BUNNIES an address to store its information
+	la $t0, bunnies_data
+	sw $t0, SEARCH_BUNNIES
+
+	# find location of our pen
+	lw $s1, PLAYPEN_LOCATION
+	srl $s0, $s1, 16		# x position of our playpen
+	and $s1, $s1, 0x0000ffff	# y position of our playpen
+	# set number of carrots we have (we start with 10)
+	li $s4, 10
+
+	# @TODO make sure that sb_arctan is behaving correctly, a (1,1) input produces 49, not 45
+	# li $a0, 1
+	# li $a1, 1
+	# jal sb_arctan
+	# sw $v0, PRINT_INT_ADDR
+
 	j start
 
 start:
@@ -113,7 +159,6 @@ no_request:
 	# lock our own pen
 	# unlock enemy pen
 	# consider all logic that goes with it
-	# us
 	
 	j start
 
@@ -134,10 +179,13 @@ puzzle_init:
 	la $a3, baskets_data
 	sw $0, baskets_data
 	
+	## Solving and requesting puzzles
+	bne $s4, 0, skip_puzzle	# if we have carrots, skip the puzzle
 	jal search_carrot
 	sw $v0, integer_solution
 	la $v0, integer_solution
 	sw $v0, SUBMIT_SOLUTION
+	add $s4, $s4, 1
 	#turn off puzzle ready flag
 	la $t0, PUZZLE_READY
 	not $t0, $t0
@@ -146,9 +194,111 @@ puzzle_init:
 	la $t0, PUZZLE_REQUESTED
 	not $t0, $t0
 	and $t9, $t9, $t0
-	
+
+skip_puzzle:
+	# determine if we're gonna find another bunny
+	bne $t7, $0, skip_find_bunny
+	sub $sp, $sp, 4
+	sw $ra, 0($sp) 
+	jal pick_rabbit		# after this, $t7 should be the address of the rabbit we want
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
+
+skip_find_bunny:
+	sub $sp, $sp, 4
+	sw $ra, 0($sp)
+	jal head_to_destination
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
+
+	sub $sp, $sp, 4
+	sw $ra, 0($sp)
+	jal check_destination
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
+
 
 	j start
+
+##### PICK RABBIT CODE #####
+
+# there are 20 rabbits in the contest when playing both alone and with somebody else
+
+pick_rabbit:
+	la $t2, bunnies_data		# $t1 = address of current bunny
+	add $t2, $t2, 4			# 4 offset to skip integer in BunniesInfo struct
+	li $t1, 0			# i = 0
+	li $t3, -1			# $t3 = weight of heaviest bunny found
+	
+pick_rabbit_loop:
+	# as of right now, I guess I'll just find the heaviest bunny
+	# find better algorithm to pick rabbits
+	beq $t1, 20, pick_rabbit_end	# i < 20 @TODO the number of rabbits is only guaranteed to be between 10 and 20, use the integer in bunnies_data for this condition
+	lw $t4, 8($t2)			# $t4 = weight of bunny we're looking at
+	ble $t4, $t3, pick_rabbit_skip_rabbit
+	move $t3, $t4			# max_weight = current_weight
+	move $t7, $t2			# target_bunny = this_bunny	
+
+pick_rabbit_skip_rabbit:
+	add $t2, $t2, 16		# move pointer to next bunny
+	add $t1, $t1, 1			# i++
+	j pick_rabbit_loop
+	
+pick_rabbit_end:
+	jr $ra
+
+##### HEAD TO DESTINATION CODE #####
+
+head_to_destination:
+	and $t0, $t9, HUNT_BUNNY	# check if we want to be hunting bunnies right now
+	beq $t0, HUNT_BUNNY, head_to_destination_bunny
+
+head_to_destination_bunny:
+	# here, I'm gonna assume that $t7 is the address of a bunny, and things will fuck up if it's not
+	lw $t0, 0($t7)			# bunny.x
+	lw $t1, BOT_X			# bot.x
+	sub $a0, $t0, $t1		# bunny.x - bot.x
+	lw $t0, 4($t7)  		# bunny.y
+	lw $t1, BOT_Y			# bunny.y - bot.y
+	sub $a1, $t0, $t1		# bunny.y - bot.y
+	# the arguments of arctan are distances from the origin of the circle
+	jal sb_arctan			# $v0 is the angle that we want, in degrees
+	sw $v0, ANGLE
+	li $t0, 10
+	sw $t9, ANGLE_CONTROL
+	sw $t0, VELOCITY
+	
+	j start
+
+##### CHECK DESTINATION CODE #####
+
+check_destination:
+	and $t0, $t9, HUNT_BUNNY
+	beq $t0, HUNT_BUNNY, check_destination_bunny
+
+check_destination_bunny:
+	# same assumption, $t7 better be the address of a bunny
+	lw $t0, 0($t7)				# bunny.x
+	lw $t1, BOT_X				# bot.x
+	sub $a0, $t0, $t1			# bunny.x - bot.x
+	lw $t0, 4($t7)  			# bunny.y
+	lw $t1, BOT_Y				# bunny.y - bot.y
+	sub $a1, $t0, $t1			# bunny.y - bot.y
+	# the arguments of the euclidian distance are the distances from the origin of the unit circle
+	jal euclidian_dist			# v0 is the distance of our bot to the target bunny
+	bgt $v0, 5, check_destination_end	# skip the catch
+	#catch the bunny
+	lw $t0, 8($t7)
+	add $t8, $t8, $t0			# add the weight of the current bunny to the weight held
+	sw $t7, CATCH_BUNNY
+	sub $s4, $s4, 1				# lose one carrot
+	li $t7, 0				# set target bunny to null
+	
+
+check_destination_end:
+	j start
+
+	
 	
 	
 ##### PROVIDED PUZZLE SOLVER CODE #####	
@@ -614,6 +764,83 @@ tsa_skip:
 tsa_done:
 	jr	$ra			# $v0 is already sum
 
+##### TRIG FUNCTIONS #####
+
+
+# -----------------------------------------------------------------------
+# euclidean_dist - computes sqrt(x^2 + y^2)
+# $a0 - x
+# $a1 - y
+# returns the distance
+# -----------------------------------------------------------------------
+
+euclidean_dist:
+	mul	$a0, $a0, $a0	# x^2
+	mul	$a1, $a1, $a1	# y^2
+	add	$v0, $a0, $a1	# x^2 + y^2
+	mtc1	$v0, $f0
+	cvt.s.w	$f0, $f0	# float(x^2 + y^2)
+	sqrt.s	$f0, $f0	# sqrt(x^2 + y^2)
+	cvt.w.s	$f0, $f0	# int(sqrt(...))
+	mfc1	$v0, $f0
+	jr	$ra
+
+# -----------------------------------------------------------------------
+# sb_arctan - computes the arctangent of y / x
+# $a0 - x
+# $a1 - y
+# returns the arctangent
+# -----------------------------------------------------------------------
+
+sb_arctan:
+	li	$v0, 0		# angle = 0;
+
+	abs	$t0, $a0	# get absolute values
+	abs	$t1, $a1
+	ble	$t1, $t0, no_TURN_90	  
+
+	## if (abs(y) > abs(x)) { rotate 90 degrees }
+	move	$t0, $a1	# int temp = y;
+	neg	$a1, $a0	# y = -x;      
+	move	$a0, $t0	# x = temp;    
+	li	$v0, 90		# angle = 90;  
+
+no_TURN_90:
+	bgez	$a0, pos_x 	# skip if (x >= 0)
+
+	## if (x < 0) 
+	add	$v0, $v0, 180	# angle += 180;
+
+pos_x:
+	mtc1	$a0, $f0
+	mtc1	$a1, $f1
+	cvt.s.w $f0, $f0	# convert from ints to floats
+	cvt.s.w $f1, $f1
+	
+	div.s	$f0, $f1, $f0	# float v = (float) y / (float) x;
+
+	mul.s	$f1, $f0, $f0	# v^^2
+	mul.s	$f2, $f1, $f0	# v^^3
+	l.s	$f3, three	# load 3.0
+	div.s 	$f3, $f2, $f3	# v^^3/3
+	sub.s	$f6, $f0, $f3	# v - v^^3/3
+
+	mul.s	$f4, $f1, $f2	# v^^5
+	l.s	$f5, five	# load 5.0
+	div.s 	$f5, $f4, $f5	# v^^5/5
+	add.s	$f6, $f6, $f5	# value = v - v^^3/3 + v^^5/5
+
+	l.s	$f8, PI		# load PI
+	div.s	$f6, $f6, $f8	# value / PI
+	l.s	$f7, F180	# load 180.0
+	mul.s	$f6, $f6, $f7	# 180.0 * value / PI
+
+	cvt.w.s $f6, $f6	# convert "delta" back to integer
+	mfc1	$t0, $f6
+	add	$v0, $v0, $t0	# angle += delta
+
+	jr 	$ra
+
 ##### INTERRUPT HANDLER #####
 
 .kdata
@@ -633,6 +860,9 @@ interrupt_handler:
 	sw $s2, 8($k0)
 	sw $s3, 12($k0)
 	sw $s4, 16($k0)
+	sw $s5, 20($k0)
+	sw $s6, 24($k0)
+	sw $s7, 28($k0)
 
         mfc0 $k0, $13                   # get cause register
         srl $s0, $k0, 2
@@ -686,16 +916,10 @@ timer_interrupt:
 
 jump_interrupt:
         sw $s1, BUNNY_MOVE_ACK                # acknowledge
-	# currently, this just finds the first bunny in the array
-	# and sets its coordinates to be the target location
-	# @TODO
-
-        #la $s4, bunnies_data
-        #sw $s4, SEARCH_BUNNIES
-        #la $s2, bunnies_data
-        #add $s2, 4
-        #lw $t3, 0($s2)
-        #lw $t4, 4($s2)
+	# @TODO just find the new coordinates of the bunny,
+	# it doesn't look like bunnies ever jump that far and this will save a lot of time
+	# in comparison with trying to find the next closest bunny every time one bunny jumps
+	
 
         j interrupt_dispatch
 
@@ -715,6 +939,9 @@ done:
 	lw $s2, 8($k0)
 	lw $s3, 12($k0)
 	lw $s4, 16($k0)	
+	lw $s5, 20($k0)
+	lw $s6, 24($k0)
+	lw $s7, 28($k0)
 
 .set noat
         move $at, $k1
