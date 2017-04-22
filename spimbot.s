@@ -160,15 +160,12 @@ no_request:
 	# unlock enemy pen
 	# consider all logic that goes with it
 	
-	j start
+	j skip_puzzle
 
 puzzle_init:
 	# initialize values for search carrot
 	# search_carrot(int max_baskets, int k, Node* root, Baskets* baskets)
 	sw $0, VELOCITY	# stop the bot for now
-	la $t9, PUZZLE_READY
-	not $t9, $t9
-	and $t9, $t0, $t9
 
 	la $t0, puzzle_data
 	li $a0, 10		# max baskets should always be 10
@@ -194,29 +191,18 @@ puzzle_init:
 	la $t0, PUZZLE_REQUESTED
 	not $t0, $t0
 	and $t9, $t9, $t0
+	li $t0, 10
+	sw $t0, VELOCITY
 
 skip_puzzle:
 	# determine if we're gonna find another bunny
 	bne $t7, $0, skip_find_bunny
-	sub $sp, $sp, 4
-	sw $ra, 0($sp) 
 	jal pick_rabbit		# after this, $t7 should be the address of the rabbit we want
-	lw $ra, 0($sp)
-	add $sp, $sp, 4
 
+# I'm gonna do this register jumping below really poorly just to make sure shit works
 skip_find_bunny:
-	sub $sp, $sp, 4
-	sw $ra, 0($sp)
 	jal head_to_destination
-	lw $ra, 0($sp)
-	add $sp, $sp, 4
-
-	sub $sp, $sp, 4
-	sw $ra, 0($sp)
 	jal check_destination
-	lw $ra, 0($sp)
-	add $sp, $sp, 4
-
 
 	j start
 
@@ -225,6 +211,9 @@ skip_find_bunny:
 # there are 20 rabbits in the contest when playing both alone and with somebody else
 
 pick_rabbit:
+	sub $sp, $sp, 4
+	sw $ra, 0($sp)
+
 	la $t2, bunnies_data		# $t1 = address of current bunny
 	add $t2, $t2, 4			# 4 offset to skip integer in BunniesInfo struct
 	li $t1, 0			# i = 0
@@ -245,13 +234,18 @@ pick_rabbit_skip_rabbit:
 	j pick_rabbit_loop
 	
 pick_rabbit_end:
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
 	jr $ra
 
 ##### HEAD TO DESTINATION CODE #####
 
 head_to_destination:
+	sub $sp, $sp, 4
+	sw $ra, 0($sp)
+	
 	and $t0, $t9, HUNT_BUNNY	# check if we want to be hunting bunnies right now
-	beq $t0, HUNT_BUNNY, head_to_destination_bunny
+	bne $t0, HUNT_BUNNY, head_to_destination_end
 
 head_to_destination_bunny:
 	# here, I'm gonna assume that $t7 is the address of a bunny, and things will fuck up if it's not
@@ -264,17 +258,31 @@ head_to_destination_bunny:
 	# the arguments of arctan are distances from the origin of the circle
 	jal sb_arctan			# $v0 is the angle that we want, in degrees
 	sw $v0, ANGLE
+	li $t0, 1
+	sw $t0, ANGLE_CONTROL
 	li $t0, 10
-	sw $t9, ANGLE_CONTROL
 	sw $t0, VELOCITY
-	
-	j start
+
+	# print angle and the x and y of the bunny 
+	# sw $v0, PRINT_INT_ADDR
+	# lw $t0, 0($t7)
+	# sw $t0, PRINT_INT_ADDR
+	# lw $t0, ($t7)
+	# sw $t0, PRINT_INT_ADDR
+
+head_to_destination_end:
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
+	jr $ra
 
 ##### CHECK DESTINATION CODE #####
 
 check_destination:
+	sub $sp, $sp, 4
+	sw $ra, 0($sp)
+
 	and $t0, $t9, HUNT_BUNNY
-	beq $t0, HUNT_BUNNY, check_destination_bunny
+	bne $t0, HUNT_BUNNY, check_destination_end
 
 check_destination_bunny:
 	# same assumption, $t7 better be the address of a bunny
@@ -285,7 +293,7 @@ check_destination_bunny:
 	lw $t1, BOT_Y				# bunny.y - bot.y
 	sub $a1, $t0, $t1			# bunny.y - bot.y
 	# the arguments of the euclidian distance are the distances from the origin of the unit circle
-	jal euclidian_dist			# v0 is the distance of our bot to the target bunny
+	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
 	bgt $v0, 5, check_destination_end	# skip the catch
 	#catch the bunny
 	lw $t0, 8($t7)
@@ -294,13 +302,11 @@ check_destination_bunny:
 	sub $s4, $s4, 1				# lose one carrot
 	li $t7, 0				# set target bunny to null
 	
-
 check_destination_end:
-	j start
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
+	jr $ra
 
-	
-	
-	
 ##### PROVIDED PUZZLE SOLVER CODE #####	
 
 search_carrot:
@@ -792,17 +798,23 @@ euclidean_dist:
 # returns the arctangent
 # -----------------------------------------------------------------------
 
+# I'm gonna switch some register use here, it uses t registers and it might be fucking up our code
+# switching $t0, $t1 to $s0, $s1, and saving them
 sb_arctan:
+	sub $sp, $sp, 8
+	sw $s0, 0($sp)
+	sw $s1, 4($sp)
+
 	li	$v0, 0		# angle = 0;
 
-	abs	$t0, $a0	# get absolute values
-	abs	$t1, $a1
-	ble	$t1, $t0, no_TURN_90	  
+	abs	$s0, $a0	# get absolute values
+	abs	$s1, $a1
+	ble	$s1, $s0, no_TURN_90	  
 
 	## if (abs(y) > abs(x)) { rotate 90 degrees }
-	move	$t0, $a1	# int temp = y;
+	move	$s0, $a1	# int temp = y;
 	neg	$a1, $a0	# y = -x;      
-	move	$a0, $t0	# x = temp;    
+	move	$a0, $s0	# x = temp;    
 	li	$v0, 90		# angle = 90;  
 
 no_TURN_90:
@@ -836,9 +848,12 @@ pos_x:
 	mul.s	$f6, $f6, $f7	# 180.0 * value / PI
 
 	cvt.w.s $f6, $f6	# convert "delta" back to integer
-	mfc1	$t0, $f6
-	add	$v0, $v0, $t0	# angle += delta
+	mfc1	$s0, $f6
+	add	$v0, $v0, $s0	# angle += delta
 
+	lw $s0, 0($sp)
+	lw $s1, 4($sp)
+	add $sp, $sp, 8
 	jr 	$ra
 
 ##### INTERRUPT HANDLER #####
@@ -902,8 +917,7 @@ bonk_interrupt:
         sw $s1, BONK_ACK                # acknowledge
 	li $t0, 180
 	sw $t0, ANGLE
-	li $t0, 0
-	sw $t0, ANGLE_CONTROL
+	sw $0, ANGLE_CONTROL
         #sw $t0, VELOCITY                 # stop moving
 
         j interrupt_dispatch
