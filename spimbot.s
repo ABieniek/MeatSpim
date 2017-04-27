@@ -77,12 +77,12 @@ integer_solution: .space 4
 
 ##### REGISTER VARIABLE INDEX #####
 ##### T Registers
-# $t0 - temporary (branch condition testing, ...)
+# $t0 - temporary (branch condition testing, address holding, ...)
 # $t1 - temporary (loop counter)
 # $t2 - temporary (address holder)
-# $t3 - weight of heaviest bunny in find_bunny
-# $t4 - 
-# $t5 - 
+# $t3 - temporary (weight of heaviest bunny in find_bunny, ....)
+# $t4 - temporary (weight of current bunny, ...)
+# $t5 - temporary (number of bunnies in bunnies data, ...)
 # $t6 - 
 # $t7 - address of the bunny we want (set to null if we just caught a bunny)
 # $t8 - weight of rabbits we're holding
@@ -93,7 +93,7 @@ integer_solution: .space 4
 # $s2 - x position of their pen
 # $s3 - y position of their pen
 # $s4 - number of carrots we have
-# $s5 - 
+# $s5 - number of rabbits we have
 # $s6 - 
 # $s7 - 
 
@@ -123,21 +123,16 @@ integer_solution: .space 4
 	
 enemy_bot_false:
 	# give SEARCH_BUNNIES an address to store its information
-	la $t0, bunnies_data
-	sw $t0, SEARCH_BUNNIES
+	# la $t0, bunnies_data
+	# sw $t0, SEARCH_BUNNIES
+	# might be redundant
 
 	# find location of our pen
 	lw $s1, PLAYPEN_LOCATION
 	srl $s0, $s1, 16		# x position of our playpen
 	and $s1, $s1, 0x0000ffff	# y position of our playpen
-	# set number of carrots we have (we start with 10)
-	li $s4, 10
-
-	# @TODO make sure that sb_arctan is behaving correctly, a (1,1) input produces 49, not 45
-	# li $a0, 1
-	# li $a1, 1
-	# jal sb_arctan
-	# sw $v0, PRINT_INT_ADDR
+	li $s4, 10	# set number of carrots we have (we start with 10)
+	# li $s5, 0	# number of rabbits we have, but the register should start with 0
 
 	j start
 
@@ -153,16 +148,11 @@ no_request:
 	# branch to do puzzle
 	and $t0, $t9, PUZZLE_READY
 	bne $t0, $0, puzzle_init
-
-	# @TODO find and catch bunnies
-	# return bunnies to pen
-	# lock our own pen
-	# unlock enemy pen
-	# consider all logic that goes with it
-	
 	j skip_puzzle
 
 puzzle_init:
+	bne $s4, 0, skip_puzzle	# if we have carrots, skip the puzzle
+
 	# initialize values for search carrot
 	# search_carrot(int max_baskets, int k, Node* root, Baskets* baskets)
 	sw $0, VELOCITY	# stop the bot for now
@@ -177,7 +167,6 @@ puzzle_init:
 	sw $0, baskets_data
 	
 	## Solving and requesting puzzles
-	bne $s4, 0, skip_puzzle	# if we have carrots, skip the puzzle
 	jal search_carrot
 	sw $v0, integer_solution
 	la $v0, integer_solution
@@ -196,10 +185,13 @@ puzzle_init:
 
 skip_puzzle:
 	# determine if we're gonna find another bunny
+	# @TODO there will probably need to be multiple checks here:
+	# check if we have a bunny loaded into the address right now (done)
+	# check if we can hold more bunnies
+	# check if, in our control flow, we want to be getting another bunny at this moment	
 	bne $t7, $0, skip_find_bunny
-	jal pick_rabbit		# after this, $t7 should be the address of the rabbit we want
+	jal pick_rabbit			# after this, $t7 should be the address of the rabbit we want
 
-# I'm gonna do this register jumping below really poorly just to make sure shit works
 skip_find_bunny:
 	jal head_to_destination
 	jal check_destination
@@ -208,13 +200,16 @@ skip_find_bunny:
 
 ##### PICK RABBIT CODE #####
 
-# there are 20 rabbits in the contest when playing both alone and with somebody else
-
 pick_rabbit:
+	# @TODO consider cases regarding the enemy player picking up a rabbit:
+	# is the bunny still there when we get there?
+	# is he heading towards, or close to, the bunny we're looking at right now?
 	sub $sp, $sp, 4
 	sw $ra, 0($sp)
 
 	la $t2, bunnies_data		# $t1 = address of current bunny
+	sw $t2, SEARCH_BUNNIES		# store to SEARCH_BUNNIES to update the bunnies information
+	lw $t5, 0($t2)			# number of bunnies in our array
 	add $t2, $t2, 4			# 4 offset to skip integer in BunniesInfo struct
 	li $t1, 0			# i = 0
 	li $t3, -1			# $t3 = weight of heaviest bunny found
@@ -222,7 +217,7 @@ pick_rabbit:
 pick_rabbit_loop:
 	# as of right now, I guess I'll just find the heaviest bunny
 	# find better algorithm to pick rabbits
-	beq $t1, 20, pick_rabbit_end	# i < 20 @TODO the number of rabbits is only guaranteed to be between 10 and 20, use the integer in bunnies_data for this condition
+	beq $t1, $t5, pick_rabbit_end	# loop through until we surpass the number of bunnies in the array
 	lw $t4, 8($t2)			# $t4 = weight of bunny we're looking at
 	ble $t4, $t3, pick_rabbit_skip_rabbit
 	move $t3, $t4			# max_weight = current_weight
@@ -263,13 +258,6 @@ head_to_destination_bunny:
 	li $t0, 10
 	sw $t0, VELOCITY
 
-	# print angle and the x and y of the bunny 
-	# sw $v0, PRINT_INT_ADDR
-	# lw $t0, 0($t7)
-	# sw $t0, PRINT_INT_ADDR
-	# lw $t0, ($t7)
-	# sw $t0, PRINT_INT_ADDR
-
 head_to_destination_end:
 	lw $ra, 0($sp)
 	add $sp, $sp, 4
@@ -294,12 +282,13 @@ check_destination_bunny:
 	sub $a1, $t0, $t1			# bunny.y - bot.y
 	# the arguments of the euclidian distance are the distances from the origin of the unit circle
 	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
-	bgt $v0, 5, check_destination_end	# skip the catch
+	bgt $v0, 3, check_destination_end	# skip the catch
 	#catch the bunny
 	lw $t0, 8($t7)
 	add $t8, $t8, $t0			# add the weight of the current bunny to the weight held
 	sw $t7, CATCH_BUNNY
 	sub $s4, $s4, 1				# lose one carrot
+	add $s5, $s5, 1
 	li $t7, 0				# set target bunny to null
 	
 check_destination_end:
@@ -914,11 +903,11 @@ puzzle_interrupt:
 	j interrupt_dispatch
 
 bonk_interrupt:
-        sw $s1, BONK_ACK                # acknowledge
+        sw $s1, BONK_ACK		# acknowledge
 	li $t0, 180
 	sw $t0, ANGLE
 	sw $0, ANGLE_CONTROL
-        #sw $t0, VELOCITY                 # stop moving
+        #sw $t0, VELOCITY		# stop moving
 
         j interrupt_dispatch
 
@@ -929,13 +918,19 @@ timer_interrupt:
         j interrupt_dispatch
 
 jump_interrupt:
-        sw $s1, BUNNY_MOVE_ACK                # acknowledge
+        sw $s1, BUNNY_MOVE_ACK		# acknowledge
 	# @TODO just find the new coordinates of the bunny,
-	# it doesn't look like bunnies ever jump that far and this will save a lot of time
-	# in comparison with trying to find the next closest bunny every time one bunny jumps
+	# it doesn't look like bunnies ever jump that far
+	# so I trust that our bot will continue rerouting based on how he loops
+	# this might change in the future, though
 	
-
         j interrupt_dispatch
+
+carry_limit_interrupt:
+	sw $s1, EX_CARRY_LIMIT_ACK	# acknowledge
+	li $t8, 0			# set the weight of our rabbits to 0
+	
+		
 
 non_intrpt:
         li $v0, 4
