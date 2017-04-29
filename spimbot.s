@@ -290,7 +290,15 @@ check_destination_bunny:
 	sub $s4, $s4, 1				# lose one carrot
 	add $s5, $s5, 1
 	li $t7, 0				# set target bunny to null
-	
+	ble $t8, 80, check_destination_end	# we no longer want to catch bunnies if we're full
+	#turn off hunt bunny flag
+	la $t0, HUNT_BUNNY
+	not $t0, $t0
+	and $t9, $t9, $t0
+	# @TODO the weight carried isn't getting updated correctly
+	# I think the rabbit he picks up isn't the one he necessarily had gotten the weight information from
+	# a bad fix would be to just have him grab five rabbits, but I can't think of better ways to track weight accumulated
+
 check_destination_end:
 	lw $ra, 0($sp)
 	add $sp, $sp, 4
