@@ -43,7 +43,7 @@ TIMER_ACK               = 0xffff006c
 BUNNY_MOVE_INT_MASK     = 0x400
 BUNNY_MOVE_ACK          = 0xffff0020
 PLAYPEN_UNLOCK_INT_MASK = 0x2000
-PLAYPEN_UNLOCK_ACK      = 0xffff005c
+PLAYPEN_UNLOCK_ACK      = 0xffff0028
 EX_CARRY_LIMIT_INT_MASK = 0x4000
 EX_CARRY_LIMIT_ACK      = 0xffff002c
 REQUEST_PUZZLE_INT_MASK = 0x800
@@ -57,7 +57,9 @@ PUZZLE_READY			= 0x00000004	# flag for if the puzzle is ready
 PUZZLE_REQUESTED		= 0x00000008	# we requested the puzzle, there's no need to request another one
 HAS_ENEMY			= 0x00000010	# true if we have an opponent in this simulation
 HUNT_BUNNY			= 0x00000020	# true if we should be hunting bunnies right now
-
+RETURN_TO_PEN			= 0x00000040	# true if we want to return our bunnies
+OPEN_ENEMY_PEN			= 0x00000080	# true if we want to open the enemy pen
+CLOSE_TO_ENEMY_PEN		= 0x00000100	# true if we've caught a rabbit and we're within X distance units of the enemy pen
 
 .data
 # puzzle stuff
@@ -83,9 +85,9 @@ integer_solution: .space 4
 # $t3 - temporary (weight of heaviest bunny in find_bunny, ....)
 # $t4 - temporary (weight of current bunny, ...)
 # $t5 - temporary (number of bunnies in bunnies data, ...)
-# $t6 - 
-# $t7 - address of the bunny we want (set to null if we just caught a bunny)
-# $t8 - weight of rabbits we're holding
+# $t6 - x position of destination (rabbit, enemy pen, ...)
+# $t7 - y position of destination (rabbit, enemy pen, ...) 
+# $t8 - address of the bunny we want (set to null if we just caught a bunny)
 # $t9 - holds bit flags used for bot's decision making
 ##### S Registers
 # $s0 - x position of our pen
@@ -119,6 +121,7 @@ integer_solution: .space 4
 	or $t9, $t9, HAS_ENEMY
 	lw $s3, PLAYPEN_OTHER_LOCATION	# we can also load the x and y position of their pen here
 	srl $s2, $s3, 16		# x position of their playpen
+	and $s2, $s2, 0x0000ffff
 	and $s3, $s3, 0x0000ffff	# y position of their playpen
 	
 enemy_bot_false:
@@ -130,32 +133,59 @@ enemy_bot_false:
 	# find location of our pen
 	lw $s1, PLAYPEN_LOCATION
 	srl $s0, $s1, 16		# x position of our playpen
+	and $s0, $s0, 0x0000ffff
 	and $s1, $s1, 0x0000ffff	# y position of our playpen
 	li $s4, 10	# set number of carrots we have (we start with 10)
 	# li $s5, 0	# number of rabbits we have, but the register should start with 0
 
-	j start
-
-start:
-	# branch to request puzzle
-	and $t0, $t9, PUZZLE_REQUESTED
-	bgt $t0, $0, no_request
+	# immediately request a puzzle
 	la $t0, puzzle_data
 	sw $t0, REQUEST_PUZZLE
 	or $t9, $t9, PUZZLE_REQUESTED
-	
-no_request:
+
+	j start
+
+start:
 	# branch to do puzzle
+	# and $t0, $t9, PUZZLE_READY
+	# bne $t0, PUZZLE_READY, skip_puzzle
+	# bgt $s4, 5, skip_puzzle
+	# jal puzzle_init
+
+skip_puzzle:
+	# determine if we're gonna find another bunny
+	# @TODO there will probably need to be multiple checks here:
+	# check if we have a bunny loaded into the address right now (done)
+	# check if we can hold more bunnies
+	# check if, in our control flow, we want to be getting another bunny at this moment	
+	bne $t8, $0, skip_find_bunny
+	jal pick_rabbit			# after this, $t8 should be the address of the rabbit we want
+
+skip_find_bunny:
+	beq $s4, 0, start
+	jal head_to_destination
 	and $t0, $t9, PUZZLE_READY
-	bne $t0, $0, puzzle_init
-	j skip_puzzle
+	bne $t0, PUZZLE_READY, skip_puzzle2
+	bgt $s4, 5, skip_puzzle2
+	jal puzzle_init
+
+skip_puzzle2:
+	jal check_destination
+
+	j start
+
+##### SOLVE PUZZLE CODE #####
 
 puzzle_init:
-	bne $s4, 0, skip_puzzle	# if we have carrots, skip the puzzle
+	sub $sp, $sp, 4
+	sw $ra, 0($sp)
 
+	#bne $s4, 0, skip_puzzle	# if we have carrots, skip the puzzle
+
+	
 	# initialize values for search carrot
 	# search_carrot(int max_baskets, int k, Node* root, Baskets* baskets)
-	sw $0, VELOCITY	# stop the bot for now
+	# sw $0, VELOCITY	# stop the bot for now
 
 	la $t0, puzzle_data
 	li $a0, 10		# max baskets should always be 10
@@ -172,6 +202,7 @@ puzzle_init:
 	la $v0, integer_solution
 	sw $v0, SUBMIT_SOLUTION
 	add $s4, $s4, 1
+	# sw $s4, PRINT_INT_ADDR
 	#turn off puzzle ready flag
 	la $t0, PUZZLE_READY
 	not $t0, $t0
@@ -183,20 +214,15 @@ puzzle_init:
 	li $t0, 10
 	sw $t0, VELOCITY
 
-skip_puzzle:
-	# determine if we're gonna find another bunny
-	# @TODO there will probably need to be multiple checks here:
-	# check if we have a bunny loaded into the address right now (done)
-	# check if we can hold more bunnies
-	# check if, in our control flow, we want to be getting another bunny at this moment	
-	bne $t7, $0, skip_find_bunny
-	jal pick_rabbit			# after this, $t7 should be the address of the rabbit we want
+	# immediately request anotha one
+	la $t0, puzzle_data
+	sw $t0, REQUEST_PUZZLE
+	or $t9, $t9, PUZZLE_REQUESTED
 
-skip_find_bunny:
-	jal head_to_destination
-	jal check_destination
 
-	j start
+	lw $ra, 0($sp)
+	add $sp, $sp, 4
+	jr $ra
 
 ##### PICK RABBIT CODE #####
 
@@ -221,7 +247,7 @@ pick_rabbit_loop:
 	lw $t4, 8($t2)			# $t4 = weight of bunny we're looking at
 	ble $t4, $t3, pick_rabbit_skip_rabbit
 	move $t3, $t4			# max_weight = current_weight
-	move $t7, $t2			# target_bunny = this_bunny	
+	move $t8, $t2			# target_bunny = this_bunny	
 
 pick_rabbit_skip_rabbit:
 	add $t2, $t2, 16		# move pointer to next bunny
@@ -229,6 +255,8 @@ pick_rabbit_skip_rabbit:
 	j pick_rabbit_loop
 	
 pick_rabbit_end:
+	lw $t6, 0($t8)
+	lw $t7, 4($t8)
 	lw $ra, 0($sp)
 	add $sp, $sp, 4
 	jr $ra
@@ -239,17 +267,23 @@ head_to_destination:
 	sub $sp, $sp, 4
 	sw $ra, 0($sp)
 	
+	and $t0, $t9, OUR_PLAYPEN_UNLOCKED
+	beq $t0, OUR_PLAYPEN_UNLOCKED, head_to_destination_our_pen
 	and $t0, $t9, HUNT_BUNNY	# check if we want to be hunting bunnies right now
-	bne $t0, HUNT_BUNNY, head_to_destination_end
+	beq $t0, HUNT_BUNNY, head_to_destination_bunny
+	and $t0, $t9, RETURN_TO_PEN	# check if we want to return bunnies
+	beq $t0, RETURN_TO_PEN, head_to_destination_our_pen
+	# @TODO we might want to check this condition first
+	and $t0, $t9, OPEN_ENEMY_PEN	# check if we want to try to open their pen
+	beq $t0, OPEN_ENEMY_PEN, head_to_destination_enemy_pen
+	j head_to_destination_end
 
 head_to_destination_bunny:
-	# here, I'm gonna assume that $t7 is the address of a bunny, and things will fuck up if it's not
-	lw $t0, 0($t7)			# bunny.x
+	# here, I'm gonna assume that $t8 is the address of a bunny, and things will fuck up if it's not
 	lw $t1, BOT_X			# bot.x
-	sub $a0, $t0, $t1		# bunny.x - bot.x
-	lw $t0, 4($t7)  		# bunny.y
-	lw $t1, BOT_Y			# bunny.y - bot.y
-	sub $a1, $t0, $t1		# bunny.y - bot.y
+	sub $a0, $t6, $t1		# bunny.x - bot.x
+	lw $t1, BOT_Y			# bot.y
+	sub $a1, $t7, $t1		# bunny.y - bot.y
 	# the arguments of arctan are distances from the origin of the circle
 	jal sb_arctan			# $v0 is the angle that we want, in degrees
 	sw $v0, ANGLE
@@ -257,6 +291,23 @@ head_to_destination_bunny:
 	sw $t0, ANGLE_CONTROL
 	li $t0, 10
 	sw $t0, VELOCITY
+	j head_to_destination_end
+
+head_to_destination_our_pen:
+	lw $t1, BOT_X			# bot.x
+	sub $a0, $s0, $t1		# pen.x - bot.x
+	lw $t1, BOT_Y			# bot.y
+	sub $a1, $s1, $t1		# pen.y - bot.y
+	jal sb_arctan
+	sw $v0, ANGLE
+	li $t0, 1
+	sw $t0, ANGLE_CONTROL
+	li $t0, 10
+	sw $t0, VELOCITY
+	j head_to_destination_end
+	
+head_to_destination_enemy_pen:
+	j head_to_destination_end
 
 head_to_destination_end:
 	lw $ra, 0($sp)
@@ -270,34 +321,70 @@ check_destination:
 	sw $ra, 0($sp)
 
 	and $t0, $t9, HUNT_BUNNY
-	bne $t0, HUNT_BUNNY, check_destination_end
+	beq $t0, HUNT_BUNNY, check_destination_bunny
+	and $t0, $t9, RETURN_TO_PEN
+	beq $t0, RETURN_TO_PEN, check_destination_our_pen
+	and $t0, $t9, OPEN_ENEMY_PEN
+	beq $t0, $t9, checK_destination_enemy_pen
+	j check_destination_end
+	
 
 check_destination_bunny:
-	# same assumption, $t7 better be the address of a bunny
-	lw $t0, 0($t7)				# bunny.x
+	# same assumption, $t8 better be the address of a bunny
 	lw $t1, BOT_X				# bot.x
-	sub $a0, $t0, $t1			# bunny.x - bot.x
-	lw $t0, 4($t7)  			# bunny.y
-	lw $t1, BOT_Y				# bunny.y - bot.y
-	sub $a1, $t0, $t1			# bunny.y - bot.y
+	sub $a0, $t6, $t1			# bunny.x - bot.x
+	lw $t1, BOT_Y				# bot.y
+	sub $a1, $t7, $t1			# bunny.y - bot.y
 	# the arguments of the euclidian distance are the distances from the origin of the unit circle
 	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
 	bgt $v0, 3, check_destination_end	# skip the catch
 	#catch the bunny
-	lw $t0, 8($t7)
-	add $t8, $t8, $t0			# add the weight of the current bunny to the weight held
-	sw $t7, CATCH_BUNNY
+	lw $t0, 8($t8)
+	sw $t8, CATCH_BUNNY
 	sub $s4, $s4, 1				# lose one carrot
-	add $s5, $s5, 1
-	li $t7, 0				# set target bunny to null
-	ble $t8, 80, check_destination_end	# we no longer want to catch bunnies if we're full
+	# sw $s4, PRINT_INT_ADDR
+	add $s5, $s5, 1				# gain one rabbit
+	li $t8, 0				# set target bunny to null
+	bne $s5, 5, check_destination_end	# we no longer want to catch bunnies if we're full
 	#turn off hunt bunny flag
 	la $t0, HUNT_BUNNY
 	not $t0, $t0
 	and $t9, $t9, $t0
-	# @TODO the weight carried isn't getting updated correctly
-	# I think the rabbit he picks up isn't the one he necessarily had gotten the weight information from
-	# a bad fix would be to just have him grab five rabbits, but I can't think of better ways to track weight accumulated
+	or $t9, $t9, RETURN_TO_PEN
+	# @TODO
+	j check_destination_end
+
+check_destination_our_pen:
+	lw $t1, BOT_X
+	sub $a0, $s0, $t1
+	lw $t1, BOT_Y
+	sub $a1, $s1, $t1
+	# same as euclidian distance call above
+	jal euclidean_dist
+	bgt $v0, 3, check_destination_end
+	# try to lock our pen
+	and $t0, $t0, OUR_PLAYPEN_UNLOCKED
+	bne $t0, OUR_PLAYPEN_UNLOCKED, check_destination_skip_lock
+	sw $t0, LOCK_PLAYPEN
+	# now turn off the unlocked playpen flag
+	la $t0, OUR_PLAYPEN_UNLOCKED
+	not $t0, $t0
+	and $t9, $t9, $t0
+
+check_destination_skip_lock:
+	# put bunnies away
+	lw $s5, NUM_BUNNIES_CARRIED
+	sw $s5, PUT_BUNNIES_IN_PLAYPEN
+	li $s5, 0
+	# turn off the flag for returning bunnies, turn on the flag for hunting for bunnies
+	la $t0, RETURN_TO_PEN
+	not $t0, $t0
+	and $t9, $t9, $t0
+	or $t9, $t9, HUNT_BUNNY
+	j check_destination_end
+	
+check_destination_enemy_pen:
+	j check_destination_end
 
 check_destination_end:
 	lw $ra, 0($sp)
@@ -894,6 +981,9 @@ interrupt_dispatch:
         and $s0, $k0, 0x400             # check for jump interrupt
         bne $s0, 0, jump_interrupt
 
+	and $s0, $k0, PLAYPEN_UNLOCK_INT_MASK	# check for playpen interrupt
+	bne $s0, 0, playpen_interrupt
+
 	and $s0, $k0, REQUEST_PUZZLE_INT_MASK
 	bne $s0, 0, puzzle_interrupt
 
@@ -927,6 +1017,11 @@ timer_interrupt:
 
 jump_interrupt:
         sw $s1, BUNNY_MOVE_ACK		# acknowledge
+	beq $t8, $0, interrupt_dispatch
+	la $s0, bunnies_data
+	sw $s0, SEARCH_BUNNIES
+	lw $t6, 0($t8)			# new bunny.x
+	lw $t7, 4($t8)			# new bunny.y
 	# @TODO just find the new coordinates of the bunny,
 	# it doesn't look like bunnies ever jump that far
 	# so I trust that our bot will continue rerouting based on how he loops
@@ -936,9 +1031,14 @@ jump_interrupt:
 
 carry_limit_interrupt:
 	sw $s1, EX_CARRY_LIMIT_ACK	# acknowledge
-	li $t8, 0			# set the weight of our rabbits to 0
 	
-		
+	j interrupt_dispatch
+
+playpen_interrupt:
+	sw $s1, PLAYPEN_UNLOCK_ACK	# acknowledge
+	or $t9, $t9, OUR_PLAYPEN_UNLOCKED
+	
+	j interrupt_dispatch
 
 non_intrpt:
         li $v0, 4
