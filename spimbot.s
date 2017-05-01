@@ -60,6 +60,7 @@ HUNT_BUNNY			= 0x00000020	# true if we should be hunting bunnies right now
 RETURN_TO_PEN			= 0x00000040	# true if we want to return our bunnies
 OPEN_ENEMY_PEN			= 0x00000080	# true if we want to open the enemy pen
 CLOSE_TO_ENEMY_PEN		= 0x00000100	# true if we've caught a rabbit and we're within X distance units of the enemy pen
+TOO_CLOSE_FOR_PUZZLE		= 0x00000200	# true if we want to skip a puzzle because we're close to our target
 
 .data
 # puzzle stuff
@@ -82,8 +83,8 @@ integer_solution: .space 4
 # $t0 - temporary (branch condition testing, address holding, ...)
 # $t1 - temporary (loop counter)
 # $t2 - temporary (address holder)
-# $t3 - temporary (weight of heaviest bunny in find_bunny, ....)
-# $t4 - temporary (weight of current bunny, ...)
+# $t3 - temporary (value of highest value bunny in find_bunny, ....)
+# $t4 - temporary (value of current bunny, ...)
 # $t5 - temporary (number of bunnies in bunnies data, ...)
 # $t6 - x position of destination (rabbit, enemy pen, ...)
 # $t7 - y position of destination (rabbit, enemy pen, ...) 
@@ -146,13 +147,6 @@ enemy_bot_false:
 	j start
 
 start:
-	# branch to do puzzle
-	# and $t0, $t9, PUZZLE_READY
-	# bne $t0, PUZZLE_READY, skip_puzzle
-	# bgt $s4, 5, skip_puzzle
-	# jal puzzle_init
-
-skip_puzzle:
 	# determine if we're gonna find another bunny
 	# @TODO there will probably need to be multiple checks here:
 	# check if we have a bunny loaded into the address right now (done)
@@ -165,11 +159,13 @@ skip_find_bunny:
 	beq $s4, 0, start
 	jal head_to_destination
 	and $t0, $t9, PUZZLE_READY
-	bne $t0, PUZZLE_READY, skip_puzzle2
-	bgt $s4, 5, skip_puzzle2
+	bne $t0, PUZZLE_READY, skip_puzzle
+	# bgt $s4, 5, skip_puzzle		# @TODO comment out, go ham on carrots
+	and $t0, $t9, TOO_CLOSE_FOR_PUZZLE
+	beq $t0, TOO_CLOSE_FOR_PUZZLE, skip_puzzle
 	jal puzzle_init
 
-skip_puzzle2:
+skip_puzzle:
 	jal check_destination
 
 	j start
@@ -233,20 +229,47 @@ pick_rabbit:
 	sub $sp, $sp, 4
 	sw $ra, 0($sp)
 
+	# rabbit value = weight / distance from bot
+	# the best rabbits to catch will be those that allow us to collect the most units of weight over time
+
 	la $t2, bunnies_data		# $t1 = address of current bunny
 	sw $t2, SEARCH_BUNNIES		# store to SEARCH_BUNNIES to update the bunnies information
 	lw $t5, 0($t2)			# number of bunnies in our array
 	add $t2, $t2, 4			# 4 offset to skip integer in BunniesInfo struct
 	li $t1, 0			# i = 0
-	li $t3, -1			# $t3 = weight of heaviest bunny found
+	li $t3, -1			# $t3 = value of highest value rabbit
 	
 pick_rabbit_loop:
 	# as of right now, I guess I'll just find the heaviest bunny
 	# find better algorithm to pick rabbits
 	beq $t1, $t5, pick_rabbit_end	# loop through until we surpass the number of bunnies in the array
-	lw $t4, 8($t2)			# $t4 = weight of bunny we're looking at
+
+	# calculating the value of the bunny we're looking at
+	lw $a0, BOT_X				# bot.x
+	lw $t6, 0($t2)				# bunny.x
+	sub $a0, $t6, $a0			# bunny.x - bot.x
+	lw $a1, BOT_Y				# bot.y
+	lw $t7, 4($t2)				# bunny.y
+	sub $a1, $t7, $a1			# bunny.y - bot.y
+	# the arguments of the euclidian distance are the distances from the origin of the unit circle
+	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
+	lw $t4, 8($t2)				# $t4 = weight of bunny we're looking at
+	# if the distance is zero, skip the division
+	beq $v0, $0, pick_rabbit_loop_skip_division
+	blt $v0, 50, pick_rabbit_straight
+	div $t4, $t4, $v0
+	j pick_rabbit_loop_2
+
+pick_rabbit_loop_skip_division:
+	li $t4, 0x0000ffff
+
+pick_rabbit_straight:
+	move $t8, $t2
+	j pick_rabbit_end
+
+pick_rabbit_loop_2:
 	ble $t4, $t3, pick_rabbit_skip_rabbit
-	move $t3, $t4			# max_weight = current_weight
+	move $t3, $t4			# max_value = current_value
 	move $t8, $t2			# target_bunny = this_bunny	
 
 pick_rabbit_skip_rabbit:
@@ -291,6 +314,12 @@ head_to_destination_bunny:
 	sw $t0, ANGLE_CONTROL
 	li $t0, 10
 	sw $t0, VELOCITY
+	# reload $a0 and $a1
+	lw $t1, BOT_X			# bot.x
+	sub $a0, $t6, $t1		# bunny.x - bot.x
+	lw $t1, BOT_Y			# bot.y
+	sub $a1, $t7, $t1		# bunny.y - bot.y
+
 	j head_to_destination_end
 
 head_to_destination_our_pen:
@@ -304,12 +333,27 @@ head_to_destination_our_pen:
 	sw $t0, ANGLE_CONTROL
 	li $t0, 10
 	sw $t0, VELOCITY
+	# reload $a0 and $a1
+	lw $t1, BOT_X			# bot.x
+	sub $a0, $s0, $t1		# pen.x - bot.x
+	lw $t1, BOT_Y			# bot.y
+	sub $a1, $s1, $t1		# pen.y - bot.y
+	
 	j head_to_destination_end
 	
 head_to_destination_enemy_pen:
+	
+	# reload $a0 and $a1
+
 	j head_to_destination_end
 
 head_to_destination_end:
+	# we should have reloaded $a0 and $a1
+	jal euclidean_dist
+	bge $v0, 10, head_to_destination_end_2
+	or $t9, $t9, TOO_CLOSE_FOR_PUZZLE	
+
+head_to_destination_end_2:
 	lw $ra, 0($sp)
 	add $sp, $sp, 4
 	jr $ra
@@ -343,9 +387,11 @@ check_destination_bunny:
 	sw $t8, CATCH_BUNNY
 	sub $s4, $s4, 1				# lose one carrot
 	# sw $s4, PRINT_INT_ADDR
-	add $s5, $s5, 1				# gain one rabbit
+	add $s5, $s5, $t0			# add weight of the picked up rabbit to total weight
+						# @TODO we can free this up because the number of rabbits
+						# we're carrying is mapped to NUM_BUNNIES_CARRIED
 	li $t8, 0				# set target bunny to null
-	bne $s5, 5, check_destination_end	# we no longer want to catch bunnies if we're full
+	blt $s5, 80, check_destination_end	# we no longer want to catch bunnies if we're full
 	#turn off hunt bunny flag
 	la $t0, HUNT_BUNNY
 	not $t0, $t0
@@ -387,8 +433,12 @@ check_destination_enemy_pen:
 	j check_destination_end
 
 check_destination_end:
+	# we're no longer too close for a puzzle
+	la $t0, TOO_CLOSE_FOR_PUZZLE
+	not $t0, $t0
+	and $t9, $t9, $t0
 	lw $ra, 0($sp)
-	add $sp, $sp, 4
+	add $sp, $sp, 4 
 	jr $ra
 
 ##### PROVIDED PUZZLE SOLVER CODE #####	
