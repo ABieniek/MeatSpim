@@ -156,7 +156,7 @@ start:
 	# check if we have a bunny loaded into the address right now (done)
 	# check if we can hold more bunnies
 	# check if, in our control flow, we want to be getting another bunny at this moment	
-	bne $t8, $0, skip_find_bunny
+	# bne $t8, $0, skip_find_bunny
 	jal pick_rabbit			# after this, $t8 should be the address of the rabbit we want
 
 skip_find_bunny:
@@ -241,12 +241,20 @@ pick_rabbit:
 	lw $t5, 0($t2)			# number of bunnies in our array
 	add $t2, $t2, 4			# 4 offset to skip integer in BunniesInfo struct
 	add $t1, $0, $0			# i = 0
-	add $t3, $0, -1			# $t3 = value of highest value rabbit
+	move $t8, $t2			# just use the first bunny in the array as the starting bunny
+	bgt $s4, 10, pick_rabbit_init_distance 
+	li $t3, -1			# use $t3 as max weight/distance
+	j pick_rabbit_loop
+
+pick_rabbit_init_distance:
+	li $t3, 0x00ffffff		# use $t3 as min distance
+	j pick_rabbit_loop
 	
 pick_rabbit_loop:
 	# as of right now, I guess I'll just find the heaviest bunny
 	# find better algorithm to pick rabbits
 	beq $t1, $t5, pick_rabbit_end	# loop through until we surpass the number of bunnies in the array
+	
 
 	# calculating the value of the bunny we're looking at
 	lw $a0, BOT_X				# bot.x
@@ -257,27 +265,33 @@ pick_rabbit_loop:
 	sub $a1, $t7, $a1			# bunny.y - bot.y
 	# the arguments of the euclidian distance are the distances from the origin of the unit circle
 	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
-	lw $t4, 8($t2)				# $t4 = weight of bunny we're looking at
-	blt $v0, 65, pick_rabbit_straight
-	# if the distance is zero, skip the division
-	beq $v0, $0, pick_rabbit_loop_skip_division
-	div $t4, $t4, $v0
-	j pick_rabbit_loop_2
+	blt $v0, 3, pick_rabbit_this_one	# we are right on top of our rabbit, just catch it
+	bgt $s4, 3, pick_rabbit_pick_distance	# if we have more than X carrots, go for closer rabbits
+	j pick_rabbit_pick_weight
 
-pick_rabbit_loop_skip_division:
-	add $t4, $0, 0xffff
-	# add $t8 ,$t2, $0
-	# j pick_rabbit_end
-	
+pick_rabbit_pick_distance:
+	# $v0 = current distance
+	# $t3 = min distance
+	bge $v0, $t3, pick_rabbit_skip_rabbit
+	# if this rabbit is closer, make that the target
+	move $t3, $v0	# update best distance
+	move $t8, $t2
+	j pick_rabbit_skip_rabbit
 
-pick_rabbit_straight:
-	add $t8, $t2, $0
+pick_rabbit_pick_weight:
+	# blt $v0, 30, pick_rabbit_this_one
+	lw $t4, 8($t2)				# bunny's weight
+	# $t3 = best weight over distance
+	div $t4, $t4, $v0			# w/d
+	blt $t4, $t3, pick_rabbit_skip_rabbit
+	# if higher w/d, make that the target
+	move $t3, $t4				# update best w/d
+	move $t8, $t2				# update rabbit pointer
+	j pick_rabbit_skip_rabbit
+
+pick_rabbit_this_one:
+	move $t8, $t2
 	j pick_rabbit_end
-
-pick_rabbit_loop_2:
-	ble $t4, $t3, pick_rabbit_skip_rabbit
-	add $t3, $t4, $0		# max_value = current_value
-	add $t8, $t2, $0		# target_bunny = this_bunny	
 
 pick_rabbit_skip_rabbit:
 	add $t2, $t2, 16		# move pointer to next bunny
@@ -285,6 +299,7 @@ pick_rabbit_skip_rabbit:
 	j pick_rabbit_loop
 	
 pick_rabbit_end:
+	# load information of this rabbit we're now hunting
 	lw $t6, 0($t8)
 	lw $t7, 4($t8)
 	lw $ra, 0($sp)
