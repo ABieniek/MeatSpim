@@ -101,10 +101,10 @@ integer_solution: .space 4
 # $s7 - 
 
  .text
- main:
+main:
 	##### Initialization Stuff #####
 	# enable interrupts
-        li      $t4, TIMER_MASK                 	# timer interrupt enable bit
+        add	$t4, $0, TIMER_MASK                 	# timer interrupt enable bit
         or      $t4, $t4, BONK_MASK             	# bonk interrupt bit
         or      $t4, $t4, BUNNY_MOVE_INT_MASK   	# jump interrupt bit
 	or	$t4, $t4, REQUEST_PUZZLE_INT_MASK	# puzzle interrupt bit
@@ -112,12 +112,15 @@ integer_solution: .space 4
         or      $t4, $t4, 1				# global interrupt enable
         mtc0    $t4, $12				# set interrupt mask (Status register)
 
-	# set flag for hunting bunnies, there's nothing else we could want to do at the start
+	# set flag for hunting bunnies and unlock playpen
 	or $t9, $t9, HUNT_BUNNY
+	or $t9, $t9, CAN_UNLOCK_ENEMY_PLAYPEN
 
 	# set flag if we have an enemy
 	# reading from any of the enemy bot queries will return -1
 	lw $t0, OTHER_BOT_X
+	add $s2, $0, -500
+	add $s3, $0, -500
 	beq $t0, -1, enemy_bot_false	# if the return value is negative 1, skip setting the flag
 	or $t9, $t9, HAS_ENEMY
 	lw $s3, PLAYPEN_OTHER_LOCATION	# we can also load the x and y position of their pen here
@@ -136,8 +139,8 @@ enemy_bot_false:
 	srl $s0, $s1, 16		# x position of our playpen
 	and $s0, $s0, 0x0000ffff
 	and $s1, $s1, 0x0000ffff	# y position of our playpen
-	li $s4, 10	# set number of carrots we have (we start with 10)
-	# li $s5, 0	# number of rabbits we have, but the register should start with 0
+	add $s4, $0, 10			# set number of carrots we have (we start with 10)
+	# li $s5, 0			# number of rabbits we have, but the register should start with 0
 
 	# immediately request a puzzle
 	la $t0, puzzle_data
@@ -147,6 +150,7 @@ enemy_bot_false:
 	j start
 
 start:
+
 	# determine if we're gonna find another bunny
 	# @TODO there will probably need to be multiple checks here:
 	# check if we have a bunny loaded into the address right now (done)
@@ -156,19 +160,19 @@ start:
 	jal pick_rabbit			# after this, $t8 should be the address of the rabbit we want
 
 skip_find_bunny:
-	beq $s4, 0, start
+	# beq $s4, 0, start
 	jal head_to_destination
+	# if puzzle isn't ready ,skip puzzle
 	and $t0, $t9, PUZZLE_READY
 	bne $t0, PUZZLE_READY, skip_puzzle
-	# bgt $s4, 5, skip_puzzle		# @TODO comment out, go ham on carrots
+	# if close to target, skip puzzle for now
 	and $t0, $t9, TOO_CLOSE_FOR_PUZZLE
 	beq $t0, TOO_CLOSE_FOR_PUZZLE, skip_puzzle
 	jal puzzle_init
 
 skip_puzzle:
 	jal check_destination
-
-	j start
+	j start 
 
 ##### SOLVE PUZZLE CODE #####
 
@@ -184,7 +188,7 @@ puzzle_init:
 	# sw $0, VELOCITY	# stop the bot for now
 
 	la $t0, puzzle_data
-	li $a0, 10		# max baskets should always be 10
+	add $a0, $0, 10		# max baskets should always be 10
 				# @OPT set this value up in the initialization stage and never touch it again
 	lw $a1, 9800($t0)	# k is the last word in the puzzle struct
 	la $a2, puzzle_data	# root node (?)
@@ -207,7 +211,7 @@ puzzle_init:
 	la $t0, PUZZLE_REQUESTED
 	not $t0, $t0
 	and $t9, $t9, $t0
-	li $t0, 10
+	add $t0, $0, 10
 	sw $t0, VELOCITY
 
 	# immediately request anotha one
@@ -236,8 +240,8 @@ pick_rabbit:
 	sw $t2, SEARCH_BUNNIES		# store to SEARCH_BUNNIES to update the bunnies information
 	lw $t5, 0($t2)			# number of bunnies in our array
 	add $t2, $t2, 4			# 4 offset to skip integer in BunniesInfo struct
-	li $t1, 0			# i = 0
-	li $t3, -1			# $t3 = value of highest value rabbit
+	add $t1, $0, $0			# i = 0
+	add $t3, $0, -1			# $t3 = value of highest value rabbit
 	
 pick_rabbit_loop:
 	# as of right now, I guess I'll just find the heaviest bunny
@@ -254,23 +258,26 @@ pick_rabbit_loop:
 	# the arguments of the euclidian distance are the distances from the origin of the unit circle
 	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
 	lw $t4, 8($t2)				# $t4 = weight of bunny we're looking at
+	blt $v0, 65, pick_rabbit_straight
 	# if the distance is zero, skip the division
 	beq $v0, $0, pick_rabbit_loop_skip_division
-	blt $v0, 50, pick_rabbit_straight
 	div $t4, $t4, $v0
 	j pick_rabbit_loop_2
 
 pick_rabbit_loop_skip_division:
-	li $t4, 0x0000ffff
+	add $t4, $0, 0xffff
+	# add $t8 ,$t2, $0
+	# j pick_rabbit_end
+	
 
 pick_rabbit_straight:
-	move $t8, $t2
+	add $t8, $t2, $0
 	j pick_rabbit_end
 
 pick_rabbit_loop_2:
 	ble $t4, $t3, pick_rabbit_skip_rabbit
-	move $t3, $t4			# max_value = current_value
-	move $t8, $t2			# target_bunny = this_bunny	
+	add $t3, $t4, $0		# max_value = current_value
+	add $t8, $t2, $0		# target_bunny = this_bunny	
 
 pick_rabbit_skip_rabbit:
 	add $t2, $t2, 16		# move pointer to next bunny
@@ -290,15 +297,26 @@ head_to_destination:
 	sub $sp, $sp, 4
 	sw $ra, 0($sp)
 	
+	# check if we should really be heading to the enemy pen here
+	lw $a0, BOT_X
+	sub $a0, $a0, $s2
+	lw $a1, BOT_Y
+	sub $a1, $a1, $s3
+	jalr euclidean_dist
+	bgt $v0, 50, head_to_destination_skip_unlock
+	and $t0, $t9, CAN_UNLOCK_ENEMY_PLAYPEN
+	beq $t0, CAN_UNLOCK_ENEMY_PLAYPEN, head_to_destination_enemy_pen
+
+head_to_destination_skip_unlock:
 	and $t0, $t9, OUR_PLAYPEN_UNLOCKED
 	beq $t0, OUR_PLAYPEN_UNLOCKED, head_to_destination_our_pen
 	and $t0, $t9, HUNT_BUNNY	# check if we want to be hunting bunnies right now
 	beq $t0, HUNT_BUNNY, head_to_destination_bunny
 	and $t0, $t9, RETURN_TO_PEN	# check if we want to return bunnies
 	beq $t0, RETURN_TO_PEN, head_to_destination_our_pen
-	# @TODO we might want to check this condition first
-	and $t0, $t9, OPEN_ENEMY_PEN	# check if we want to try to open their pen
-	beq $t0, OPEN_ENEMY_PEN, head_to_destination_enemy_pen
+	# @TODO I probably won't have time to set logic for going to the enemy pen
+	# and $t0, $t9, OPEN_ENEMY_PEN	# check if we want to try to open their pen
+	# beq $t0, OPEN_ENEMY_PEN, head_to_destination_enemy_pen
 	j head_to_destination_end
 
 head_to_destination_bunny:
@@ -310,9 +328,9 @@ head_to_destination_bunny:
 	# the arguments of arctan are distances from the origin of the circle
 	jal sb_arctan			# $v0 is the angle that we want, in degrees
 	sw $v0, ANGLE
-	li $t0, 1
+	add $t0, $0, 1
 	sw $t0, ANGLE_CONTROL
-	li $t0, 10
+	add $t0, $0, 10
 	sw $t0, VELOCITY
 	# reload $a0 and $a1
 	lw $t1, BOT_X			# bot.x
@@ -329,9 +347,9 @@ head_to_destination_our_pen:
 	sub $a1, $s1, $t1		# pen.y - bot.y
 	jal sb_arctan
 	sw $v0, ANGLE
-	li $t0, 1
+	add $t0, $0, 1
 	sw $t0, ANGLE_CONTROL
-	li $t0, 10
+	add $t0, $0, 10
 	sw $t0, VELOCITY
 	# reload $a0 and $a1
 	lw $t1, BOT_X			# bot.x
@@ -342,16 +360,29 @@ head_to_destination_our_pen:
 	j head_to_destination_end
 	
 head_to_destination_enemy_pen:
-	
+	lw $t1, BOT_X			# bot.x
+	sub $a0, $s2, $t1		# theirPen.x - bot.x
+	lw $t1, BOT_Y			# bot.y
+	sub $a1, $s3, $t1		# theirPen.y - bot.y
+	jal sb_arctan
+	sw $v0, ANGLE
+	add $t0, $0, 1
+	sw $t0, ANGLE_CONTROL
+	add $t0, $0, 10
+	sw $t0, VELOCITY
 	# reload $a0 and $a1
-
+	lw $t1, BOT_X			# bot.x
+	sub $a0, $s0, $t1		# theirPen.x - bot.x
+	lw $t1, BOT_Y			# bot.y
+	sub $a1, $s1, $t1		# theirPen.y - bot.y	
 	j head_to_destination_end
 
 head_to_destination_end:
 	# we should have reloaded $a0 and $a1
 	jal euclidean_dist
-	bge $v0, 10, head_to_destination_end_2
-	or $t9, $t9, TOO_CLOSE_FOR_PUZZLE	
+	bge $v0, 50, head_to_destination_end_2		
+	beq $s4, 0, head_to_destination_end_2		# if we have no carrots, don't say we shouldn't do a puzzle
+	or $t9, $t9, TOO_CLOSE_FOR_PUZZLE
 
 head_to_destination_end_2:
 	lw $ra, 0($sp)
@@ -364,12 +395,23 @@ check_destination:
 	sub $sp, $sp, 4
 	sw $ra, 0($sp)
 
+	# check if we should really be heading to the enemy pen here
+	lw $a0, BOT_X
+	sub $a0, $a0, $s2
+	lw $a1, BOT_Y
+	sub $a1, $a1, $s3
+	jalr euclidean_dist
+	bgt $v0, 50, check_destination_skip_unlock
+	and $t0, $t9, CAN_UNLOCK_ENEMY_PLAYPEN
+	beq $t0, CAN_UNLOCK_ENEMY_PLAYPEN, check_destination_enemy_pen
+
+check_destination_skip_unlock:
 	and $t0, $t9, HUNT_BUNNY
 	beq $t0, HUNT_BUNNY, check_destination_bunny
 	and $t0, $t9, RETURN_TO_PEN
 	beq $t0, RETURN_TO_PEN, check_destination_our_pen
-	and $t0, $t9, OPEN_ENEMY_PEN
-	beq $t0, $t9, checK_destination_enemy_pen
+	# and $t0, $t9, OPEN_ENEMY_PEN
+	# beq $t0, $t9, checK_destination_enemy_pen
 	j check_destination_end
 	
 
@@ -382,6 +424,7 @@ check_destination_bunny:
 	# the arguments of the euclidian distance are the distances from the origin of the unit circle
 	jal euclidean_dist			# v0 is the distance of our bot to the target bunny
 	bgt $v0, 3, check_destination_end	# skip the catch
+	beq $s4, $0, check_destination_end
 	#catch the bunny
 	lw $t0, 8($t8)
 	sw $t8, CATCH_BUNNY
@@ -390,14 +433,13 @@ check_destination_bunny:
 	add $s5, $s5, $t0			# add weight of the picked up rabbit to total weight
 						# @TODO we can free this up because the number of rabbits
 						# we're carrying is mapped to NUM_BUNNIES_CARRIED
-	li $t8, 0				# set target bunny to null
-	blt $s5, 80, check_destination_end	# we no longer want to catch bunnies if we're full
+	add $t8, $0, 0				# set target bunny to null
+	blt $s5, 81, check_destination_end	# we no longer want to catch bunnies if we're full
 	#turn off hunt bunny flag
 	la $t0, HUNT_BUNNY
 	not $t0, $t0
 	and $t9, $t9, $t0
 	or $t9, $t9, RETURN_TO_PEN
-	# @TODO
 	j check_destination_end
 
 check_destination_our_pen:
@@ -408,20 +450,16 @@ check_destination_our_pen:
 	# same as euclidian distance call above
 	jal euclidean_dist
 	bgt $v0, 3, check_destination_end
-	# try to lock our pen
-	and $t0, $t0, OUR_PLAYPEN_UNLOCKED
-	bne $t0, OUR_PLAYPEN_UNLOCKED, check_destination_skip_lock
+	# lock our pen
 	sw $t0, LOCK_PLAYPEN
 	# now turn off the unlocked playpen flag
 	la $t0, OUR_PLAYPEN_UNLOCKED
 	not $t0, $t0
 	and $t9, $t9, $t0
-
-check_destination_skip_lock:
 	# put bunnies away
 	lw $s5, NUM_BUNNIES_CARRIED
 	sw $s5, PUT_BUNNIES_IN_PLAYPEN
-	li $s5, 0
+	add $s5, $0, 0
 	# turn off the flag for returning bunnies, turn on the flag for hunting for bunnies
 	la $t0, RETURN_TO_PEN
 	not $t0, $t0
@@ -430,9 +468,36 @@ check_destination_skip_lock:
 	j check_destination_end
 	
 check_destination_enemy_pen:
+	lw $t1, BOT_X
+	sub $a0, $s2, $t1	# bot.x - theirPen.x
+	lw $t1, BOT_Y
+	sub $a1, $s3, $t1	# bot.y - theirPen.y
+	# same as euclidian distance call above
+	jal euclidean_dist
+	bgt $v0, 3, check_destination_end
+	# unlock enemy pen, set timer
+	sw $t0, UNLOCK_PLAYPEN
+	lw     $t0, TIMER
+	add  $t0, $t0, 100000
+	sw    $t0, TIMER
+	# turn off flag for opening pen
+	add $t0, $0, CAN_UNLOCK_ENEMY_PLAYPEN
+	not $t0, $t0
+	and $t9, $t9, $t0
+
 	j check_destination_end
 
 check_destination_end:
+	# check if we can close enemy pen
+	lw $a0, BOT_X
+	sub $a0, $a0, $s2	# bot.x - enemyPen.x
+	lw $a1, BOT_Y
+	sub $a1, $a1, $s3	# bot.y - enemyPen.y
+	jal euclidean_dist	# $v0 = dist
+	bgt $v0, 3, check_destination_end_2
+	sw $s2, UNLOCK_PLAYPEN
+
+check_destination_end_2:
 	# we're no longer too close for a puzzle
 	la $t0, TOO_CLOSE_FOR_PUZZLE
 	not $t0, $t0
@@ -444,7 +509,7 @@ check_destination_end:
 ##### PROVIDED PUZZLE SOLVER CODE #####	
 
 search_carrot:
-	move	$v0, $0			# set return value to 0 early
+	add	$v0, $0, $0			# set return value to 0 early
 	beq	$a2, 0, sc_ret		# if (root == NULL), return 0
 	beq	$a3, 0, sc_ret		# if (baskets == NULL), return 0
 
@@ -453,12 +518,12 @@ search_carrot:
 	sw	$s0, 4($sp)
 	sw	$s1, 8($sp)
 
-	move	$s0, $a1		# $s0 = int k
-	move	$s1, $a3		# $s1 = Baskets *baskets
+	add	$s0, $a1, $0		# $s0 = int k
+	add	$s1, $a3, $0		# $s1 = Baskets *baskets
 
 	sw	$0, 0($a3)		# baskets->num_found = 0
 
-	move	$t0, $0			# $t0 = int i = 0
+	add	$t0, $0, $0			# $t0 = int i = 0
 sc_for:
 	bge	$t0, $a0, sc_done	# if (i >= max_baskets), done
 
@@ -471,16 +536,16 @@ sc_for:
 
 
 sc_done:
-	move	$a1, $a2
-	move	$a2, $a3
+	add	$a1, $a2, $0
+	add	$a2, $a3, $0
 	jal	collect_baskets		# collect_baskets(max_baskets, root, baskets)
 
-	move	$a0, $s0
-	move	$a1, $s1
+	add	$a0, $s0, $0
+	add	$a1, $s1, $0
 	jal	pick_best_k_baskets	# pick_best_k_baskets(k, baskets)
 
-	move	$a0, $s0
-	move	$a1, $s1
+	add	$a0, $s0, $0
+	add	$a1, $s1, $0
 
 	lw	$ra, 0($sp)
 	lw	$s0, 4($sp)
@@ -497,7 +562,7 @@ pick_best_k_baskets:
 	jr	$ra
 
 pbkb_do:
-	sub	$sp, $sp, 32
+	sub	$sp, $sp, 36
 	sw	$ra, 0($sp)
 	sw	$s0, 4($sp)
 	sw	$s1, 8($sp)
@@ -506,9 +571,11 @@ pbkb_do:
 	sw	$s4, 20($sp)
 	sw	$s5, 24($sp)
 	sw	$s6, 28($sp)
+	sw	$s7, 32($sp)
 
-	move	$s0, $a0			# $s0 = int k
-	move	$s1, $a1			# $s1 = Baskets *baskets
+
+	add	$s0, $a0, $0			# $s0 = int k
+	add	$s1, $a1, $0			# $s1 = Baskets *baskets
 
 	li	$s2, 0				# $s2 = int i = 0
 pbkb_for_i:
@@ -517,14 +584,16 @@ pbkb_for_i:
 	lw	$s3, 0($s1)
 	sub	$s3, $s3, 1			# $s3 = int j = baskets->num_found - 1
 pbkb_for_j:
-	ble	$s3, $s2, pbkb_for_j_done	# if (j <= i), done
+	# @TODO if j is just decremented, this can be beq
+	beq	$s3, $s2, pbkb_for_j_done	# if (j <= i), done
 
 	sub	$s5, $s3, 1
 	mul	$s5, $s5, 4
 	add	$s5, $s5, $s1
 	lw	$a0, 4($s5)			# baskets->basket[j-1]
+	add	$s7, $a0, $0
 	jal	get_num_carrots			# get_num_carrots(baskets->basket[j-1])
-	move	$s4, $v0
+	add	$s4, $v0, $0
 
 	mul	$s6, $s3, 4
 	add	$s6, $s6, $s1
@@ -538,19 +607,19 @@ pbkb_for_j:
 	## We're changing the _values_ of the array elements, so we don't need to
 	## recompute addresses every time, and can reuse them from earlier.
 
-	lw	$t0, 4($s6)			# baskets->basket[j]
-	lw	$t1, 4($s5)			# baskets->basket[j-1]
-	xor	$t2, $t0, $t1			# baskets->basket[j] ^ baskets->basket[j-1]
+	# lw	$t0, 4($s6)			# baskets->basket[j]
+	# lw	$t1, 4($s5)			# baskets->basket[j-1]
+	xor	$t2, $a0, $s7			# baskets->basket[j] ^ baskets->basket[j-1]
 	sw	$t2, 4($s6)			# baskets->basket[j] = baskets->basket[j] ^ baskets->basket[j-1]
 
-	lw	$t0, 4($s6)			# baskets->basket[j]
-	lw	$t1, 4($s5)			# baskets->basket[j-1]
-	xor	$t2, $t0, $t1			# baskets->basket[j] ^ baskets->basket[j-1]
-	sw	$t2, 4($s5)			# baskets->basket[j-1] = baskets->basket[j] ^ baskets->basket[j-1]
+	# lw	$t0, 4($s6)			# baskets->basket[j]
+	# lw	$t1, 4($s5)			# baskets->basket[j-1]
+	xor	$t3, $t2, $s7			# baskets->basket[j] ^ baskets->basket[j-1]
+	sw	$t3, 4($s5)			# baskets->basket[j-1] = baskets->basket[j] ^ baskets->basket[j-1]
 
-	lw	$t0, 4($s6)			# baskets->basket[j]
-	lw	$t1, 4($s5)			# baskets->basket[j-1]
-	xor	$t2, $t0, $t1			# baskets->basket[j] ^ baskets->basket[j-1]
+	# lw	$t0, 4($s6)			# baskets->basket[j]
+	# lw	$t1, 4($s5)			# baskets->basket[j-1]
+	xor	$t2, $t2, $t3			# baskets->basket[j] ^ baskets->basket[j-1]
 	sw	$t2, 4($s6)			# baskets->basket[j] = baskets->basket[j] ^ baskets->basket[j-1]
 
 pbkb_for_j_cont:
@@ -570,12 +639,13 @@ pbkb_done:
 	lw	$s4, 20($sp)
 	lw	$s5, 24($sp)
 	lw	$s6, 28($sp)
-	add	$sp, $sp, 32
+	lw	$s7, 32($sp)
+	add	$sp, $sp, 36
 	jr	$ra
 
 get_secret_id:
 	bne	$a1, 0, gsi_do		# if (baskets != NULL), continue
-	move	$v0, $0			# return 0
+	add	$v0, $0, $0			# return 0
 	jr	$ra
 
 gsi_do:
@@ -586,12 +656,13 @@ gsi_do:
 	sw	$s2, 12($sp)
 	sw	$s3, 16($sp)
 
-	move	$s0, $a0		# $s0 = int k
-	move	$s1, $a1		# $s1 = Baskets *baskets
-	move	$s2, $0			# $s2 = int secret_id = 0
+	add	$s0, $a0, $0		# $s0 = int k
+	add	$s1, $a1, $0		# $s1 = Baskets *baskets
+	add	$s2, $0, $0		# $s2 = int secret_id = 0
 
-	move	$s3, $0			# $s3 = int i = 0
+	add	$s3, $0, $0			# $s3 = int i = 0
 gsi_for:
+	# bge -> beq? WORSE
 	bge	$s3, $s0, gsi_return	# if (i >= k), done
 
 	mul	$t0, $s3, 4
@@ -608,7 +679,7 @@ gsi_for:
 	j	gsi_for
 
 gsi_return:
-	move	$v0, $s2		# return secret_id
+	add	$v0, $s2, $0		# return secret_id
 
 	lw	$ra, 0($sp)
 	lw	$s0, 4($sp)
@@ -620,7 +691,7 @@ gsi_return:
 
 get_num_carrots:
 	bne	$a0, 0, gnc_do		# if (spot != NULL), continue
-	move	$v0, $0			# return 0
+	add	$v0, $0, $0			# return 0
 	jr	$ra
 
 gnc_do:
@@ -655,22 +726,22 @@ collect_baskets:
 	sw	$s2, 12($sp)
 	sw	$s3, 16($sp)
 
-	move	$s0, $a0		# $s0 = int max_baskets
-	move	$s1, $a1		# $s1 = Node *spot
-	move	$s2, $a2		# $s2 = Baskets *baskets
+	add	$s0, $a0, $0		# $s0 = int max_baskets
+	add	$s1, $a1, $0		# $s1 = Node *spot
+	add	$s2, $a2, $0		# $s2 = Baskets *baskets
 
-	move	$s3, $0			# $s3 = int i = 0
+	add	$s3, $0, $0		# $s3 = int i = 0
 cb_for:
 	lw	$t0, 20($s1)		# spot->num_children
 	bge	$s3, $t0, cb_done	# if (i >= spot->num_children), done
 	lw	$t0, 0($s2)		# baskets->num_found
 	bge	$t0, $s0, cb_done	# if (baskets->num_found >= max_baskets), done
 
-	move	$a0, $s0
+	add	$a0, $s0, $0
 	mul	$a1, $s3, 4
 	add	$a1, $a1, $s1
 	lw	$a1, 24($a1)		# spot->children[i]
-	move	$a2, $s2
+	add	$a2, $s2, $0
 	jal	collect_baskets		# collect_baskets(max_baskets, spot->children[i], baskets)
 
 	add	$s3, $s3, 1		# i++
@@ -681,8 +752,9 @@ cb_done:
 	lw	$t0, 0($s2)		# baskets->num_found
 	bge	$t0, $s0, cb_return	# if (baskets->num_found >= max_baskets), return
 
-	move	$a0, $s1
+	add	$a0, $s1, $0
 	jal	get_num_carrots
+	# @TODO ble -> beq? GOT WORSE
 	ble	$v0, 0, cb_return 	# if (get_num_carrots(spot) <= 0), return
 
 	lw	$t0, 0($s2)		# baskets->num_found
@@ -729,11 +801,13 @@ calculate_identity:
 	sw	$t0, turns+12		# turns[3] = -size
 
 ci_while:
-	ble	$s2, 0, ci_done		# if (dist <= 0), done
+	# @TODO ble -> beq? BROKE
+	ble 	$s2, 0, ci_done		# if (dist <= 0), done
 
 	li	$s5, 0			# $s5 = int i = 0
 ci_for_i:
-	bge	$s5, 4, ci_while 	# if (i >= 4), done
+	# bge -> beq? 
+	beq	$s5, 4, ci_while 	# if (i >= 4), done
 
 	li	$s6, 0			# $s6 = int j = 0
 ci_for_j:
@@ -820,6 +894,7 @@ accumulate:
 	move	$s1, $a1
 
 	jal	max_conts_bits_in_common
+	# blt -> bne? BROKE
 	blt	$v0, 2, a_dp
 	or	$v0, $s0, $s1
 	j	a_ret
@@ -880,6 +955,7 @@ twisted_sum_array:
 
 	li	$t0, 0			# $t0 = int i = 0
 tsa_for:
+	# bge -> beq? WORSE
 	bge	$t0, $a1, tsa_done	# if (i >= length), done
 
 	sub	$t1, $a1, 1		# length - 1
@@ -1038,7 +1114,7 @@ interrupt_dispatch:
 	bne $s0, 0, puzzle_interrupt
 
         # add dispatch for other interrupt types here
-        li $v0, 4
+        add $v0, $0, 4
         la $s0, unhandled_str
         syscall
         j done
@@ -1052,16 +1128,18 @@ puzzle_interrupt:
 
 bonk_interrupt:
         sw $s1, BONK_ACK		# acknowledge
-	li $t0, 180
-	sw $t0, ANGLE
-	sw $0, ANGLE_CONTROL
-        #sw $t0, VELOCITY		# stop moving
+	# li $t0, 180
+	# sw $t0, ANGLE
+	# sw $0, ANGLE_CONTROL
+        # sw $t0, VELOCITY		# stop moving
 
         j interrupt_dispatch
 
 timer_interrupt:
         sw $s1, TIMER_ACK               # acknowledge
         # @TODO see if I can set up a timer interrupt for when the enemy locks their gate
+	# we can lock their gate every 100,000 cycles, regardless of when it gets locked
+	or $t9, $t9, CAN_UNLOCK_ENEMY_PLAYPEN
 
         j interrupt_dispatch
 
@@ -1091,7 +1169,7 @@ playpen_interrupt:
 	j interrupt_dispatch
 
 non_intrpt:
-        li $v0, 4
+        add $v0, $0, 4
         la $s0, non_intrpt_str
         syscall
         j done
