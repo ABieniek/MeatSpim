@@ -1,2 +1,2 @@
-# MeatSpim
-Spimbot for cs233
+# ElmerFudd
+Spimbot for cs233 Sp 2017
